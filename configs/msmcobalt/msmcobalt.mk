@@ -51,6 +51,7 @@ AUDIO_FEATURE_ENABLED_HW_ACCELERATED_EFFECTS := false
 
 AUDIO_FEATURE_ENABLED_SOURCE_TRACKING := true
 AUDIO_FEATURE_ENABLED_AUDIOSPHERE := true
+AUDIO_FEATURE_ENABLED_USB_TUNNEL_AUDIO := true
 ##AUDIO_FEATURE_FLAGS
 
 #Audio Specific device overlays
@@ -70,6 +71,7 @@ PRODUCT_COPY_FILES += \
     hardware/qcom/audio/configs/msmcobalt/audio_effects.conf:system/vendor/etc/audio_effects.conf \
     hardware/qcom/audio/configs/msmcobalt/mixer_paths.xml:system/etc/mixer_paths.xml \
     hardware/qcom/audio/configs/msmcobalt/mixer_paths_tasha.xml:system/etc/mixer_paths_tasha.xml \
+    hardware/qcom/audio/configs/msmcobalt/mixer_paths_tavil.xml:system/etc/mixer_paths_tavil.xml \
     hardware/qcom/audio/configs/msmcobalt/mixer_paths_dtp.xml:system/etc/mixer_paths_dtp.xml \
     hardware/qcom/audio/configs/msmcobalt/mixer_paths_i2s.xml:system/etc/mixer_paths_i2s.xml \
     hardware/qcom/audio/configs/msmcobalt/aanc_tuning_mixer.txt:system/etc/aanc_tuning_mixer.txt \
