@@ -16,8 +16,8 @@
  * limitations under the License.
  */
 
-#ifndef QTI_AUDIO_HAL_API_H
-#define QTI_AUDIO_HAL_API_H
+#ifndef QTI_AUDIO_QAHW_API_H
+#define QTI_AUDIO_QAHW_API_H
 
 #include <stdint.h>
 #include <strings.h>
@@ -61,6 +61,7 @@ __BEGIN_DECLS
 
 typedef void qahw_module_handle_t;
 typedef void qahw_stream_handle_t;
+typedef void (*audio_error_callback)(void* context);
 
 /**************************************/
 /* Output stream specific APIs **/
@@ -471,6 +472,8 @@ int qahw_get_audio_port(qahw_module_handle_t *hw_module,
 int qahw_set_audio_port_config(qahw_module_handle_t *hw_module,
                      const struct audio_port_config *config);
 
+void qahw_register_qas_death_notify_cb(audio_error_callback cb, void* context);
+
 __END_DECLS
 
-#endif  // QTI_AUDIO_HAL_API_H
+#endif  // QTI_AUDIO_QAHW_API_H
