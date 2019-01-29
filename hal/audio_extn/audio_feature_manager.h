@@ -30,8 +30,7 @@
 #ifndef AUDIO_FEATURE_MANAGER_H
 #define AUDIO_FEATURE_MANAGER_H
 
-#include <cutils/str_parms.h>
-
+#include <ahal_config_helper.h>
 
 enum audio_ext_feature_t {
     SND_MONITOR = 0,
@@ -40,7 +39,7 @@ enum audio_ext_feature_t {
     SSREC,
     AUDIOSPHERE,
     AFE_PROXY,
-    USE_DEEP_AS_PRIMARY_OUTPUT,
+    USE_DEEP_BUFFER_AS_PRIMARY_OUTPUT,
     HDMI_EDID,
     KEEP_ALIVE,
     HIFI_AUDIO,
