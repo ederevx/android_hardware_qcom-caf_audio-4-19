@@ -5942,6 +5942,17 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer,
     ATRACE_BEGIN("out_write");
     lock_output_stream(out);
 
+    if (is_a2dp_out_device_type(&out->device_list)) {
+        static unsigned long a2dp_out_writes = 0;
+        static unsigned long a2dp_out_bytes = 0;
+
+        a2dp_out_writes++;
+        a2dp_out_bytes += bytes;
+        if (a2dp_out_writes <= 5 || (a2dp_out_writes % 200) == 0)
+            ALOGE("a2dp_out_write: writes=%lu bytes=%lu this=%zu", a2dp_out_writes,
+                  a2dp_out_bytes, bytes);
+    }
+
     if (CARD_STATUS_OFFLINE == out->card_status) {
 
         if (out->flags & AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD) {

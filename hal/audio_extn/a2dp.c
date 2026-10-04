@@ -2787,6 +2787,17 @@ bool configure_ldac_enc_format(audio_ldac_encoder_config *ldac_bt_cfg)
     if (ldac_bt_cfg == NULL)
         return false;
 
+    /*
+     * ABR pulls in a hostless feedback capture (USECASE_AUDIO_A2DP_ABR_FEEDBACK)
+     * whose PCM open fails EBUSY on this port, aborting the LDAC session. Allow
+     * it to be turned off so LDAC runs at a fixed bitrate without the feedback
+     * path.
+     */
+    if (!property_get_bool("persist.vendor.audio.a2dp.abr", true)) {
+        ALOGD("%s: ABR disabled by persist.vendor.audio.a2dp.abr", __func__);
+        ldac_bt_cfg->is_abr_enabled = false;
+    }
+
     ldac_enc_data = mixer_get_ctl_by_name(a2dp.adev->mixer, MIXER_ENC_CONFIG_BLOCK);
     if (!ldac_enc_data) {
         ALOGE(" ERROR  a2dp encoder CONFIG data mixer control not identified");
