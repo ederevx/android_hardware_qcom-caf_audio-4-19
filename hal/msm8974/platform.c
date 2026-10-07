@@ -8318,6 +8318,13 @@ static void dirac_a2dp_mirror(const uint8_t *frame, int32_t len, int have_fallba
         return;
 
     fd = open(QEM_CONF_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0 && errno == EACCES) {
+        /* A stale file owned by someone else (for example a conf hand-written
+           by a test shell) cannot be truncated by this process. The directory
+           is group-writable, so drop it and create our own. */
+        unlink(QEM_CONF_PATH);
+        fd = open(QEM_CONF_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    }
     if (fd < 0) {
         ALOGW("%s: cannot open %s (%s)", __func__, QEM_CONF_PATH,
               strerror(errno));
