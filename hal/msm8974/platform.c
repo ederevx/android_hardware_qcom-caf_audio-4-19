@@ -29,7 +29,10 @@
 
 #include <stdlib.h>
 #include <dlfcn.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
+#include <string.h>
 #include <sys/ioctl.h>
 #include <log/log.h>
 #include <cutils/properties.h>
@@ -8202,6 +8205,135 @@ static int parse_audiocal_cfg(struct str_parms *parms, acdb_audio_cal_cfg_t *cal
     return ret;
 }
 
+/*
+ * Dirac A2DP state mirror.
+ *
+ * The OnePlus Dirac QEM app tunes the wired and speaker routes by pushing
+ * calibration frames straight to the ADSP, and the A2DP output never passes
+ * through those copps - which is exactly why the host-side A2DP effect
+ * (libdirac_a2dp) exists. That effect has to be told the same state out of
+ * band, and the component that already owns the target directory and already
+ * sees these frames is this HAL. Mirror only the enable flag, the software
+ * fallback switch and the seven EQ band gains into
+ * /data/vendor/audio/dirac_qem.conf, in the exact format the effect parses,
+ * and leave the effect's baked fallback in place for when the file is absent.
+ *
+ * This is deliberately additive: it neither changes nor replaces any ACDB or
+ * ADSP handling, it only observes the frame that was already decoded, and it
+ * touches the file only when the composed state actually changes. It is the
+ * sole writer of that file, so the HAL tuning always remains the authority;
+ * the effect is a read-only consumer.
+ */
+#define QEM_FRAME_HEADER_SIZE 12
+#define QEM_PARAM_ENABLE      0x12D01
+#define QEM_PARAM_EQ_BANDS    0x12D36
+#define QEM_EQ_BANDS          7
+#define QEM_CONF_PATH         "/data/vendor/audio/dirac_qem.conf"
+
+static void dirac_a2dp_mirror(const uint8_t *frame, int32_t len, int have_fallback,
+                              int fallback)
+{
+    static bool enabled = true;
+    static bool have_enabled;
+    static bool have_bands;
+    static bool have_fb;
+    static bool fb_enabled;
+    static int bands[QEM_EQ_BANDS];
+    static char written[192];
+
+    char text[192];
+    uint32_t param;
+    int i, fd;
+    bool changed = false;
+
+    if (have_fallback) {
+        bool now = fallback != 0;
+
+        if (!have_fb || fb_enabled != now) {
+            fb_enabled = now;
+            have_fb = true;
+            changed = true;
+        }
+    }
+
+    if (frame != NULL && len >= QEM_FRAME_HEADER_SIZE) {
+        /* The frame is a little-endian u32 module id, u32 parameter id, u16
+           size, u16 reserved, then the payload. */
+        memcpy(&param, frame + 4, sizeof(param));
+
+        if (param == QEM_PARAM_ENABLE) {
+            int32_t value;
+            bool now;
+
+            if (len >= QEM_FRAME_HEADER_SIZE + (int32_t)sizeof(value)) {
+                memcpy(&value, frame + QEM_FRAME_HEADER_SIZE, sizeof(value));
+                now = value != 0;
+                if (!have_enabled || enabled != now) {
+                    enabled = now;
+                    have_enabled = true;
+                    changed = true;
+                }
+            }
+        } else if (param == QEM_PARAM_EQ_BANDS) {
+            int next[QEM_EQ_BANDS];
+
+            if (len >= QEM_FRAME_HEADER_SIZE + QEM_EQ_BANDS * (int32_t)sizeof(float)) {
+                for (i = 0; i < QEM_EQ_BANDS; i++) {
+                    float gain;
+
+                    memcpy(&gain,
+                           frame + QEM_FRAME_HEADER_SIZE + i * sizeof(float),
+                           sizeof(gain));
+                    /* The app carries half-dB integers and halves them once at
+                       encode time; undo that exactly so the file mirrors the
+                       app's own ints. */
+                    next[i] = (int)(gain * 2.0f + (gain < 0.0f ? -0.5f : 0.5f));
+                }
+                if (!have_bands || memcmp(next, bands, sizeof(bands)) != 0) {
+                    memcpy(bands, next, sizeof(bands));
+                    have_bands = true;
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    if (!changed)
+        return;
+
+    /* A frame can arrive before both the bands and the flag are known; hold
+       the write until the composed state exists so the file is never
+       half-formed. The effect's own fallback is enabled, which is also the
+       default here. */
+    if (!have_bands || !have_fb)
+        return;
+
+    snprintf(text, sizeof(text),
+             "enabled=%d\nfallback=%d\nbands=%d;%d;%d;%d;%d;%d;%d\n",
+             enabled ? 1 : 0, fb_enabled ? 1 : 0,
+             bands[0], bands[1], bands[2], bands[3], bands[4], bands[5],
+             bands[6]);
+
+    if (strcmp(text, written) == 0)
+        return;
+
+    fd = open(QEM_CONF_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        ALOGW("%s: cannot open %s (%s)", __func__, QEM_CONF_PATH,
+              strerror(errno));
+        return;
+    }
+    if (write(fd, text, strlen(text)) != (ssize_t)strlen(text))
+        ALOGW("%s: short write to %s", __func__, QEM_CONF_PATH);
+    close(fd);
+
+    strncpy(written, text, sizeof(written) - 1);
+    written[sizeof(written) - 1] = '\0';
+    ALOGD("%s: mirrored enabled=%d fallback=%d bands=%d;%d;%d;%d;%d;%d;%d",
+          __func__, enabled ? 1 : 0, fb_enabled ? 1 : 0,
+          bands[0], bands[1], bands[2], bands[3], bands[4], bands[5], bands[6]);
+}
+
 static void set_audiocal(void *platform, struct str_parms *parms, char *value, int len) {
     struct platform_data *my_data = (struct platform_data *)platform;
     struct stream_out out;
@@ -8237,6 +8369,23 @@ static void set_audiocal(void *platform, struct str_parms *parms, char *value, i
         if(dlen<=0) {
             ALOGE("[%s] data decoding failed %d", __func__, dlen);
             goto done_key_audcal;
+        }
+
+        /* Read-only mirror of the Dirac state for the host-side A2DP effect;
+           it does not affect the ACDB/ADSP path below. cal_diracfb is the
+           software-fallback switch, a private selector consumed here and
+           never forwarded to the DSP. */
+        {
+            char fb[32];
+            int have_diracfb = 0;
+            int diracfb = 0;
+
+            if (str_parms_get_str(parms, "cal_diracfb", fb, sizeof(fb)) >= 0) {
+                str_parms_del(parms, "cal_diracfb");
+                diracfb = (int) strtol(fb, NULL, 0);
+                have_diracfb = 1;
+            }
+            dirac_a2dp_mirror(dptr, dlen, have_diracfb, diracfb);
         }
 
         list_init(&out.device_list);
